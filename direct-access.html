@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A4 Screenshot Stitcher</title>
+    <link rel="stylesheet" href="https://pyscript.net/releases/2024.1.1/core.css">
+    <script type="module" src="https://pyscript.net/releases/2024.1.1/core.js"></script>
+    
+    <style>
+        body { font-family: -apple-system, sans-serif; padding: 40px; background: #f4f7f6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        h1 { font-size: 24px; text-align: center; color: #2c3e50; }
+        .upload-area { border: 2px dashed #cbd5e0; padding: 40px; text-align: center; border-radius: 8px; margin: 20px 0; cursor: pointer; transition: 0.3s; }
+        .upload-area:hover { border-color: #3498db; background: #ebf8ff; }
+        #file-list { margin: 20px 0; list-style: none; padding: 0; }
+        .file-item { display: flex; justify-content: space-between; background: #f8fafc; padding: 10px; margin-bottom: 5px; border-radius: 4px; border: 1px solid #e2e8f0; font-size: 14px; }
+        button { width: 100%; padding: 12px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 16px; transition: 0.2s; }
+        .btn-generate { background: #2ecc71; color: white; margin-top: 10px; }
+        .btn-generate:hover { background: #27ae60; }
+        .btn-generate:disabled { background: #bdc3c7; cursor: not-allowed; }
+        .status { text-align: center; font-size: 14px; color: #7f8c8d; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>A4 PDF Stitcher</h1>
+    <p style="text-align: center; color: #666;">Upload screenshots to combine into A4 sheets.</p>
+
+    <div class="upload-area" onclick="document.getElementById('file-upload').click()">
+        <strong>Click to select images</strong>
+        <input type="file" id="file-upload" multiple accept="image/*" style="display: none;">
+    </div>
+
+    <ul id="file-list"></ul>
+
+    <button id="generate-btn" class="btn-generate" disabled>Generate A4 PDF</button>
+    <div id="status" class="status">Ready</div>
+</div>
+
+<py-config>
+    packages = ["Pillow"]
+</py-config>
+
+<script type="py">
+    import asyncio
+    from js import document, URL, Blob, Uint8Array, window
+    from pyodide.ffi import create_proxy
+    from PIL import Image
+    import io
+
+    # Global list to store image data
+    uploaded_images = []
+
+    async def handle_upload(event):
+        files = event.target.files
+        file_list_ui = document.getElementById("file-list")
+        
+        for file in files:
+            # Read file into bytes
+            array_buf = await file.arrayBuffer()
+            bytes_data = Uint8Array.new(array_buf).to_bytes()
+            
+            # Store image data
+            uploaded_images.append({
+                "name": file.name,
+                "data": bytes_data
+            })
+            
+            # Update UI
+            li = document.createElement("li")
+            li.className = "file-item"
+            li.innerHTML = f"<span>{file.name}</span>"
+            file_list_ui.appendChild(li)
+        
+        if len(uploaded_images) > 0:
+            document.getElementById("generate-btn").disabled = False
+            document.getElementById("status").innerText = f"{len(uploaded_images)} images loaded."
+
+    async def generate_pdf(event):
+        btn = document.getElementById("generate-btn")
+        status = document.getElementById("status")
+        btn.disabled = True
+        status.innerText = "Processing PDF... (this may take a moment)"
+        
+        # Give UI a chance to update
+        await asyncio.sleep(0.1)
+
+        try:
+            # Layout Constants (300 DPI A4)
+            A4_W, A4_H = 2480, 3508
+            SIDE_MARGIN = 300
+            GAP = 100
+            
+            pages = []
+            current_page = Image.new('RGB', (A4_W, A4_H), (255, 255, 255))
+            y_offset = 150
+            max_w = A4_W - (2 * SIDE_MARGIN)
+
+            for item in uploaded_images:
+                img = Image.open(io.BytesIO(item["data"])).convert("RGB")
+                
+                # Resizing logic
+                aspect = img.height / img.width
+                new_w = max_w
+                new_h = int(new_w * aspect)
+                
+                if new_h > (A4_H - 300):
+                    new_h = A4_H - 300
+                    new_w = int(new_h / aspect)
+
+                resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                if y_offset + new_h + 150 > A4_H:
+                    pages.append(current_page)
+                    current_page = Image.new('RGB', (A4_W, A4_H), (255, 255, 255))
+                    y_offset = 150
+
+                x_pos = (A4_W - new_w) // 2
+                current_page.paste(resized, (x_pos, y_offset))
+                y_offset += new_h + GAP
+
+            pages.append(current_page)
+
+            # Save to memory stream
+            pdf_stream = io.BytesIO()
+            pages[0].save(pdf_stream, format="PDF", save_all=True, append_images=pages[1:], resolution=300.0)
+            
+            # Download trigger
+            pdf_bytes = pdf_stream.getvalue()
+            js_array = Uint8Array.new(len(pdf_bytes))
+            js_array.assign(pdf_bytes)
+            
+            blob = Blob.new([js_array], { "type": "application/pdf" })
+            url = URL.createObjectURL(blob)
+            
+            link = document.createElement("a")
+            link.href = url
+            link.download = "combined_screenshots.pdf"
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+            
+            status.innerText = "Done! PDF Downloaded."
+        except Exception as e:
+            status.innerText = f"Error: {str(e)}"
+        
+        btn.disabled = False
+
+    # Attach listeners
+    upload_proxy = create_proxy(handle_upload)
+    document.getElementById("file-upload").addEventListener("change", upload_proxy)
+
+    gen_proxy = create_proxy(generate_pdf)
+    document.getElementById("generate-btn").addEventListener("click", gen_proxy)
+</script>
+
+</body>
+</html>
