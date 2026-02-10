@@ -12,7 +12,7 @@ I use this for my University labs but I think this is an useful tool and can be 
 
 ---
 
-## 🚀 Installation
+##  Installation
 
 ### 1. Prerequisites
 Ensure you have **Python 3.x** installed on your system.
