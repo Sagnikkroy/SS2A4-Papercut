@@ -34,4 +34,6 @@ python app.py
 
 btw you can also adjust margins and image gaps to your liking
 
+or you can just use direct access link without downloading - https://sagnikkroy.github.io/SS2A4-Papercut/direct-access.html
+
 
